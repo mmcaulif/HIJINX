@@ -19,6 +19,7 @@ from optax import adam
 name = 'dqn'
 
 # the cart-pole MDP
+#env = gym.make('CartPole-v0')
 env = gym.make('LunarLander-v2')
 env = coax.wrappers.TrainMonitor(env, name=name, tensorboard_dir=None, tensorboard_write_all=False)
 
@@ -47,7 +48,7 @@ buffer = coax.experience_replay.SimpleReplayBuffer(capacity=100000)
 # updater
 qlearning = coax.td_learning.QLearning(q, q_targ=q_targ, loss_function=mse, optimizer=adam(0.001))
 
-TRAIN_EPISODES = 250
+TRAIN_EPISODES = 100
 
 # train
 for ep in range(TRAIN_EPISODES):
