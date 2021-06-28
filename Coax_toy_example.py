@@ -13,14 +13,13 @@ from coax.value_losses import mse
 from optax import adam
 
 #echo $DISPLAY
-#export DISPLAY=192.168.1.18:0.0
+#export DISPLAY=192.168.1.19:0.0
 
 # the name of this script
 name = 'dqn'
 
 # the cart-pole MDP
-#env = gym.make('CartPole-v0')
-env = gym.make('LunarLander-v2')
+env = gym.make('CartPole-v0')
 env = coax.wrappers.TrainMonitor(env, name=name, tensorboard_dir=None, tensorboard_write_all=False)
 
 def func(S, is_training):
