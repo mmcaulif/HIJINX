@@ -1,4 +1,4 @@
-# High-Jinx; An introduction to deep learning using Jax and the Jax ecosystem
+# High-Jinx; A practical introduction to deep learning using Jax and the Jax ecosystem
 
 ## To-do list:
 * make a multi batch mnist version, and then a convolutional example
