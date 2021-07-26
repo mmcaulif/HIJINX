@@ -32,7 +32,7 @@ def forward(X):
 key = jax.random.PRNGKey(seed=13)
 input_size = jnp.ones([batch_size, 28 * 28])
 params = forward.init(key, input_size)
-forward = hk.without_apply_rng(forward).apply
+forward = jax.jit(hk.without_apply_rng(forward).apply)  #jit sped this up a lot
 
 @jax.grad
 def mse(params, X, y):
