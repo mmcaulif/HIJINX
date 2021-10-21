@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 
 os.environ.setdefault('JAX_PLATFORM_NAME', 'cpu')  # tell JAX to use CPU, cpu is faster on small networks
@@ -8,41 +7,40 @@ import jax
 import jax.nn
 import jax.numpy as jnp
 import haiku as hk
-from collections import namedtuple
+from collections import namedtuple, deque
 import optax
-import coax
 import gym
 import sys
 
-experience = jnp.zeros((0, 4))
+#hyperparameters
+"""LEARNING_RATE =
+GAMMA =
+BUFFER_SIZE =
+TRAIN_STEPS = """
 
-print(jnp.shape(experience))
-a = b = c = 1
-d = jnp.array([[1,1]])
-ones = jnp.array([[a,b,c,d]])
-print(jnp.shape(ones))
-experience = jnp.append(experience, ones, axis = 0)
-print(experience, len(experience))
+#functions
+Transition = namedtuple('Transition',('state', 'action', 'reward', 'next_state'))
 
-sys.exit()
+class ExperienceReplay(object):
+    def __init__ (self, buffer_size):
+        self.memory = deque([], maxlen=buffer_size)
 
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(Transition(*args))
 
-def ReplayBuffer(exp, s, a, r, s_next):
-    if len(exp) <= 100000:
-        transition = jnp.array([[s, a, r, s_next]], dtype=int)
-        exp = jnp.append(exp, transition, axis=0)
-        return exp
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
 
-    else:
-        exp = jnp.delete(exp, 0)
-        transition = jnp.array((s, a, r, s_next))
-        exp = jnp.append(exp, transition, axis=0)
-        return exp
+    def __len__(self):
+        return len(self.memory)
 
-env = gym.make('CartPole-v1')
+#def loss():    #look into bellman equation before implementing
+
+#initialisations
 
 @hk.transform
-def func(S):
+def net(S):
     seq = hk.Sequential([
         hk.Linear(8), jax.nn.relu,
         hk.Linear(8), jax.nn.relu,
@@ -51,9 +49,13 @@ def func(S):
     ])
     return seq(S)
 
-params = func.init(jax.random.PRNGKey(42), jnp.ones(4))
+env = gym.make('CartPole-v1')
+replay_buffer = ExperienceReplay(buffer_size=100000)
 
-forward = jax.jit(hk.without_apply_rng(func).apply)
+params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), jax.jit(hk.without_apply_rng(net).apply)
+
+optim = optax.adam(learning_rate=3e-3)
+optim_state = optim.init(params)
 
 #q_table = forward(params, s_t)
 #a_t = int(jnp.argmax(q_table))
@@ -64,7 +66,8 @@ for i in range(100):
     a_t = env.action_space.sample() # your agent here (this takes random actions)
     s_tp1, r_t, done, _ = env.step(a_t)
     print(i)
-    experience = ReplayBuffer(experience, s_t, a_t, r_t, s_tp1)
+
+    replay_buffer.push(s_t, a_t, r_t, s_tp1)
 
     s_t = s_tp1
 
@@ -73,4 +76,4 @@ for i in range(100):
 
 env.close()
 
-print(experience)
+print(replay_buffer)
