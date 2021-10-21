@@ -1,4 +1,4 @@
-# High-Jinx; A practical introduction to deep learning using Jax and the Jax ecosystem
+# HIJINX; A practical introduction to deep learning using Jax and the Jax ecosystem
 
 ## To-do list:
 Deep learning:
