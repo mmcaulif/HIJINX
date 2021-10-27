@@ -7,35 +7,40 @@ import jax
 import jax.nn
 import jax.numpy as jnp
 import haiku as hk
-from collections import namedtuple, deque
+from collections import deque
 import optax
 import gym
-import sys
+import random
 
 #hyperparameters
-"""LEARNING_RATE =
-GAMMA =
-BUFFER_SIZE =
-TRAIN_STEPS = """
+LEARNING_RATE = 3e-3
+GAMMA = 0.95
+BUFFER_SIZE = 100000
+TRAIN_EPISODES = 1000000
 
 #functions
-Transition = namedtuple('Transition',('state', 'action', 'reward', 'next_state'))
 
-class ExperienceReplay(object):
-    def __init__ (self, buffer_size):
-        self.memory = deque([], maxlen=buffer_size)
+"""def huber_loss(error):
+    if error <= 1:
+        huber_loss = jnp.square(error) * 0.5
+    else:
+        huber_loss = error - 0.5
 
-    def push(self, *args):
-        """Save a transition"""
-        self.memory.append(Transition(*args))
+    return huber_loss"""
 
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+@jax.grad
+def loss(params,s_t,a_t,r_t,s_tp1):
+    Q_s = forward(params, jnp.asarray(s_t))
+    Q_sp1 = forward(params, jnp.asarray(s_tp1))
+    td_e = jnp.max(Q_s) - (r_t + jnp.max(Q_sp1) * GAMMA)
+    return td_e
 
-    def __len__(self):
-        return len(self.memory)
-
-#def loss():    #look into bellman equation before implementing
+@jax.jit    #sped it up maybe 20x fold
+def update(params, optim_state, batch):
+    grads = loss(params,batch[0],batch[1],batch[2],batch[3])
+    updates, new_optim_state = optim.update(grads, optim_state, params)
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_optim_state
 
 #initialisations
 
@@ -49,31 +54,43 @@ def net(S):
     ])
     return seq(S)
 
+#environment:
 env = gym.make('CartPole-v1')
-replay_buffer = ExperienceReplay(buffer_size=100000)
-
+#experience replay:
+replay_buffer = deque(maxlen=BUFFER_SIZE)
+#neural network:
 params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), jax.jit(hk.without_apply_rng(net).apply)
-
+#optimiser:
 optim = optax.adam(learning_rate=3e-3)
 optim_state = optim.init(params)
 
-#q_table = forward(params, s_t)
-#a_t = int(jnp.argmax(q_table))
-#s_tp1, r_t, done, _ = env.step(a_t)
-
 s_t = env.reset()
-for i in range(100):
-    a_t = env.action_space.sample() # your agent here (this takes random actions)
-    s_tp1, r_t, done, _ = env.step(a_t)
-    print(i)
+r_total = 0
 
-    replay_buffer.push(s_t, a_t, r_t, s_tp1)
+for i in range(1,TRAIN_EPISODES):
+    while True:
 
-    s_t = s_tp1
+        if len(replay_buffer) < BUFFER_SIZE: #basic explore system
+            a_t = env.action_space.sample()
+        else:
+            a_t = int(jnp.max(forward(params, jnp.asarray(s_t))))
 
-    if done:
-        s_t = env.reset()
+        s_tp1, r_t, done, _ = env.step(a_t)
+
+        if done:
+            break
+
+        replay_buffer.append([s_t,a_t,r_t,s_tp1])
+        batch = random.sample(replay_buffer, k=1)[0]
+        update(params, optim_state, batch)
+
+        s_t = s_tp1
+        r_total = r_total + r_t
+
+    if i % 100 == 0:
+        print("Episode:", i, "is done, return =", r_total)
+
+    r_total = 0
+    s_t = env.reset()
 
 env.close()
-
-print(replay_buffer)
