@@ -1,6 +1,4 @@
 import os
-import numpy as np
-
 os.environ.setdefault('JAX_PLATFORM_NAME', 'cpu')  # tell JAX to use CPU, cpu is faster on small networks
 
 import jax
@@ -16,7 +14,9 @@ import random
 LEARNING_RATE = 3e-3
 GAMMA = 0.95
 BUFFER_SIZE = 100000
-TRAIN_EPISODES = 1000000
+TRAIN_STEPS = 1000000
+
+eps = 1
 
 #functions
 
@@ -32,15 +32,24 @@ TRAIN_EPISODES = 1000000
 def loss(params,s_t,a_t,r_t,s_tp1):
     Q_s = forward(params, jnp.asarray(s_t))
     Q_sp1 = forward(params, jnp.asarray(s_tp1))
-    td_e = jnp.max(Q_s) - (r_t + jnp.max(Q_sp1) * GAMMA)
+    td_e = Q_s[a_t] - (r_t + jnp.max(Q_sp1) * GAMMA)
     return td_e
 
 @jax.jit    #sped it up maybe 20x fold
 def update(params, optim_state, batch):
     grads = loss(params,batch[0],batch[1],batch[2],batch[3])
-    updates, new_optim_state = optim.update(grads, optim_state, params)
-    new_params = optax.apply_updates(params, updates)
-    return new_params, new_optim_state
+    updates, optim_state = optimizer.update(grads, optim_state, params)
+    params = optax.apply_updates(params, updates)
+    return params, optim_state
+
+def epsilon_greedy(eps):
+    r = random.random()
+    if r < eps:  # basic explore system
+        a_t = env.action_space.sample()
+    else:
+        a_t = int(jnp.argmax(forward(params, jnp.asarray(s_t))))
+
+    return a_t
 
 #initialisations
 
@@ -50,7 +59,7 @@ def net(S):
         hk.Linear(8), jax.nn.relu,
         hk.Linear(8), jax.nn.relu,
         hk.Linear(8), jax.nn.relu,
-        hk.Linear(env.action_space.n, w_init=jnp.zeros),
+        hk.Linear(env.action_space.n),
     ])
     return seq(S)
 
@@ -61,36 +70,31 @@ replay_buffer = deque(maxlen=BUFFER_SIZE)
 #neural network:
 params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), jax.jit(hk.without_apply_rng(net).apply)
 #optimiser:
-optim = optax.adam(learning_rate=3e-3)
-optim_state = optim.init(params)
+optimizer = optax.adam(learning_rate=3e-3)
+optim_state = optimizer.init(params)
 
 s_t = env.reset()
-r_total = 0
+r_avg = 0
+count = 0
 
-for i in range(1,TRAIN_EPISODES):
-    while True:
+for i in range(1,TRAIN_STEPS):
+    a_t = epsilon_greedy(eps)
+    s_tp1, r_t, done, _ = env.step(a_t)
 
-        if len(replay_buffer) < BUFFER_SIZE: #basic explore system
-            a_t = env.action_space.sample()
-        else:
-            a_t = int(jnp.max(forward(params, jnp.asarray(s_t))))
+    replay_buffer.append([s_t, a_t, r_t, s_tp1])
+    batch = random.sample(replay_buffer, k=1)[0]
+    params, optim_state = update(params, optim_state, batch)
 
-        s_tp1, r_t, done, _ = env.step(a_t)
+    s_t = s_tp1
+    r_avg = r_avg + r_t
 
-        if done:
-            break
+    if done:
+        count = count + 1
+        eps = eps * 0.99
+        if count % 1000 == 0:
+            print("Episode:", count, ", Average Return:", r_avg/1000)
+            r_avg = 0
 
-        replay_buffer.append([s_t,a_t,r_t,s_tp1])
-        batch = random.sample(replay_buffer, k=1)[0]
-        update(params, optim_state, batch)
-
-        s_t = s_tp1
-        r_total = r_total + r_t
-
-    if i % 100 == 0:
-        print("Episode:", i, "is done, return =", r_total)
-
-    r_total = 0
-    s_t = env.reset()
+        s_t = env.reset()
 
 env.close()
