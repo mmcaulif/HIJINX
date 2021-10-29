@@ -11,10 +11,10 @@ import gym
 import random
 
 #hyperparameters
-LEARNING_RATE = 3e-3
-GAMMA = 0.95
+LEARNING_RATE = 1e-4
+GAMMA = 0.99
 BUFFER_SIZE = 100000
-TRAIN_STEPS = 1000000
+TRAIN_STEPS = 300000
 
 eps = 1
 
@@ -29,16 +29,17 @@ eps = 1
     return huber_loss"""
 
 @jax.grad
-def loss(params,s_t,a_t,r_t,s_tp1,done):
+def loss(params,batch):
+    s_t, a_t, r_t, s_tp1, done = batch[0],batch[1],batch[2],batch[3],batch[4]
     Q_s = forward(params, jnp.asarray(s_t))
     Q_sp1 = forward(params, jnp.asarray(s_tp1))  #don't compute grads of target
     Q_target = r_t + jnp.max(Q_sp1) * GAMMA * (1 - done)
     td_e = Q_s[a_t] - jax.lax.stop_gradient(Q_target)
-    return td_e ** 2
+    return (td_e ** 2)/env.action_space.n
 
 @jax.jit    #sped it up maybe 20x fold
 def update(params, optim_state, batch):
-    grads = loss(params,batch[0],batch[1],batch[2],batch[3],batch[4])
+    grads = loss(params,batch)
     updates, optim_state = optimizer.update(grads, optim_state, params)
     params = optax.apply_updates(params, updates)
     return params, optim_state
@@ -95,8 +96,8 @@ for i in range(1,TRAIN_STEPS):
     if done:
         count = count + 1
         eps = eps * 0.99
-        if count % 250 == 0:
-            print("Episode:", count, ", Average Return:", r_avg/250)
+        if count % 100 == 0:
+            print("Episode:", count, ", Average Return:", r_avg/100)
             r_avg = 0
 
         s_t = env.reset()
