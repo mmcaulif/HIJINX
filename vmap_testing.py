@@ -11,6 +11,7 @@ import random
 def add_data(a, b, c, d):
     sum = jnp.sum(a) + b + c + jnp.sum(d)
     return sum
+#git.ignore test
 
 #environment:
 env = gym.make('CartPole-v1')
