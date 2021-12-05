@@ -7,9 +7,8 @@ import optax
 import gym
 
 #initialisations
-env = gym.make('LunarLander-v2')
+env = gym.make('CartPole-v1')
 key = jax.random.PRNGKey(seed=7)
-obs = jnp.ones(8)
 
 #hyperparameters
 TRAIN_STEPS = jnp.power(10, 6)
@@ -20,43 +19,29 @@ exploration = 1
 exploration_rate = 0.99
 
 @hk.transform
-def actor_net(S):
-    forward = hk.Sequential([
+def a2c_net(S):
+    actor_forward = hk.Sequential([
         hk.Linear(32), jax.nn.relu,
         hk.Linear(16), jax.nn.relu,
-        hk.Linear(4), jax.nn.sigmoid
+        hk.Linear(env.action_space.n), jax.nn.sigmoid
     ])
-    return forward(S)
-
-a_params = actor_net.init(key, obs)
-actor_forward = jax.jit(hk.without_apply_rng(actor_net).apply)
-
-actor_optim = optax.adam(learning_rate=LEARNING_RATE)
-a_opt_state = actor_optim.init(a_params)
-
-@hk.transform
-def critic_net(S):
-    forward = hk.Sequential([
+    critic_forward = hk.Sequential([
         hk.Linear(32), jax.nn.relu,
         hk.Linear(16), jax.nn.relu,
-        hk.Linear(1),
+        hk.Linear(1)
     ])
-    return forward(S)
+    return actor_forward(S), critic_forward(S)
 
-c_params = critic_net.init(key, obs)
-critic_forward = jax.jit(hk.without_apply_rng(critic_net).apply)
+params = a2c_net.init(key, obs)
+forward = jax.jit(hk.without_apply_rng(a2c_net).apply)
 
-critic_optim = optax.adam(learning_rate=LEARNING_RATE)
-c_opt_state = actor_optim.init(c_params)
+optim = optax.adam(learning_rate=LEARNING_RATE)
+opt_state = optim.init(params)
 
-def advantage(r, done, next_s, s):
-    adv = (r + (1- done) * GAMMA * critic_forward(c_params,next_s)) - critic_forward(c_params,s)
-    c_loss = jnp.power(adv,2)
-    a_probs = actor_forward(a_params, s)
-    log_a_probs = jnp.log(a_probs)
-    a_loss = -(log_a_probs * adv)
-    ent = a_probs * log_a_probs
-    return c_loss, a_loss, ent
+def critic_loss(r, params, s):
+    _, v_t = forward(params, s)
+    adv = r - v_t
+    return 0.5 * jnp.pow(adv, 2)
 
 def loss(c_loss, a_loss, ent):
     t_loss = a_loss + 0.5 * c_loss - 0.001 * ent
@@ -68,7 +53,7 @@ for i in range(TRAIN_STEPS):
     obs = next_obs
     exploration = exploration * exploration_rate
     if np.random.random_sample() > exploration:
-        action = actor_forward(obs)
+        act_probs, _ = forward(params, obs)
     else:
         action = env.action_space.sample()
 
@@ -79,16 +64,11 @@ for i in range(TRAIN_STEPS):
     if done:
         obs = env.reset()
 
-    critic_loss, actor_loss, entropy = advantage(reward, done, next_obs, obs)
-    total_loss = loss(critic_loss, actor_loss, entropy)
 
     print("Loss:", total_loss)
 
-    """c_updates, c_opt_state = critic_optim.update(total_loss_grad, c_opt_state, c_params)
-    c_params = optax.apply_updates(c_params, c_updates)
-
-    a_updates, a_opt_state = critic_optim.update(total_loss_grad, a_opt_state, a_params)
-    a_params = optax.apply_updates(a_params, a_updates)"""
+    updates, opt_state = optim.update(total_loss_grad, opt_state, params)
+    params = optax.apply_updates(params, updates)
 
 env.close()
 
