@@ -23,25 +23,27 @@ EPSILON = 1
 BATCH_SIZE = 8
 
 # functions
-mse_loss = lambda x, xp: (jnp.power((x - xp), 2)).sum().mean()  #.sum(-1)
+mse_loss = lambda x, xp: (jnp.power((x - xp), 2)).sum(-1).mean()
 
-@jax.grad
-def loss(params, target_params, batch):
+@jax.value_and_grad #maybe try decoarte with jit and then use value_and_grad when calling it instead
+def loss_fn(params, target_params, batch):
     s_t = batch[:,0]
     a_t = batch[:,1]
     r_t = batch[:,2]
     s_tp1 = batch[:,3]
     done = batch[:,4]
-    Q_s = forward(params, jnp.asarray(s_t))
-    Q_sp1 = forward(target_params, jnp.asarray(s_tp1))  # don't compute grads of target
-    Q_target = r_t + jnp.max(Q_sp1) * GAMMA * (1 - done)
-    td_mse = mse_loss(Q_s[a_t], stop_gradient(Q_target))
-    return 0.5 * td_mse
+
+    Q_s = forward(params, s_t)
+    Q_sp1 = stop_gradient(forward(target_params, s_tp1))    # don't compute grads of target
+    Q_target = r_t + jnp.max(Q_sp1) * GAMMA * (1 - done)    # might be doing this wrong, check other repo's
+    #td_mse = mse_loss(Q_s[a_t], stop_gradient(Q_target))
+    return 0.5 * (jnp.square((Q_s[a_t] - Q_target).mean())
 
 
 @jax.jit  # sped it up maybe 20x fold
 def update(params, target_params, optim_state, batch):
-    grads = loss(params, target_params, batch)
+    loss, grads = loss_fn(params, target_params, batch)
+    print(loss)
     updates, optim_state = optimizer.update(grads, optim_state, params)
     params = optax.apply_updates(params, updates)
     return params, optim_state
@@ -76,7 +78,7 @@ env = RecordEpisodeStatistics(env)
 replay_buffer = deque(maxlen=BUFFER_SIZE)
 # neural network:
 params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), jax.jit(hk.without_apply_rng(net).apply)
-target_params = params
+target_params = hk.data_structures.to_immutable_dict(params)
 # optimiser:
 optimizer = optax.rmsprop(learning_rate=LEARNING_RATE)
 optim_state = optimizer.init(params)
@@ -93,15 +95,14 @@ for i in range(1, TRAIN_EPS):
 
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
         if len(replay_buffer) > BATCH_SIZE:
-            batch = random.sample(replay_buffer, k=BATCH_SIZE)
-            print(batch[:, 0])
+            batch = jnp.asarray(random.sample(replay_buffer, k=BATCH_SIZE), dtype=object)
             params, optim_state = update(params, target_params, optim_state, batch)
 
         s_t = s_tp1
         EPSILON = EPSILON * 0.99
 
         if i % TARGET_UPDATE == 0:
-            target_params = params
+            target_params = hk.data_structures.to_immutable_dict(params)
 
         if done:
             return_sum += int(info['episode']['r'])
