@@ -61,11 +61,11 @@ def epsilon_greedy(eps):
 
 # initialisations
 
-@hk.transform
+@hk.transform   #stable baselines3 dqn network is input_dim, 64, 64, output_dim
 def net(S):
     seq = hk.Sequential([
-        hk.Linear(128), jax.nn.relu,
-        hk.Linear(128), jax.nn.relu,
+        hk.Linear(64), jax.nn.relu,
+        hk.Linear(64), jax.nn.relu,
         hk.Linear(env.action_space.n),  # , w_init=jnp.zeros
     ])
     return seq(S)
