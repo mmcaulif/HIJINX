@@ -1,6 +1,7 @@
 import jax
 import jax.nn
 import jax.numpy as jnp
+import numpy as np
 from jax.lax import stop_gradient
 import haiku as hk
 from collections import deque
@@ -25,33 +26,32 @@ BATCH_SIZE = 8
 # functions
 mse_loss = lambda x, xp: (jnp.power((x - xp), 2)).sum(-1).mean()
 
-@jax.value_and_grad #maybe try decoarte with jit and then use value_and_grad when calling it instead
+@jax.value_and_grad #maybe try decorate with jit and then use value_and_grad when calling it instead
 def loss_fn(params, target_params, batch):
-    s_t = batch[:,0]
-    a_t = batch[:,1]
-    r_t = batch[:,2]
-    s_tp1 = batch[:,3]
-    done = batch[:,4]
+    s_t = jnp.asarray(batch[:,0])
+    a_t = jnp.asarray(batch[:,1])
+    r_t = jnp.asarray(batch[:,2])
+    s_tp1 = jnp.asarray(batch[:,3])
+    done = jnp.asarray(batch[:,4])
 
     Q_s = forward(params, s_t)
     Q_sp1 = stop_gradient(forward(target_params, s_tp1))    # don't compute grads of target
     Q_target = r_t + jnp.max(Q_sp1) * GAMMA * (1 - done)    # might be doing this wrong, check other repo's
     #td_mse = mse_loss(Q_s[a_t], stop_gradient(Q_target))
-    return 0.5 * (jnp.square((Q_s[a_t] - Q_target).mean())
-
+    return 0.5 * (jnp.square((Q_s[a_t] - Q_target).mean()))
 
 @jax.jit  # sped it up maybe 20x fold
 def update(params, target_params, optim_state, batch):
     loss, grads = loss_fn(params, target_params, batch)
-    print(loss)
+    #print(loss)
     updates, optim_state = optimizer.update(grads, optim_state, params)
     params = optax.apply_updates(params, updates)
     return params, optim_state
 
 
-def epsilon_greedy(eps):
-    r = random.random()
-    if r < eps:  # basic explore system
+def epsilon_greedy(epsilon):
+    rand = random.random()
+    if rand < epsilon:  # basic explore system
         a_t = env.action_space.sample()
     else:
         a_t = int(jnp.argmax(forward(params, jnp.asarray(s_t))))
@@ -95,7 +95,7 @@ for i in range(1, TRAIN_EPS):
 
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
         if len(replay_buffer) > BATCH_SIZE:
-            batch = jnp.asarray(random.sample(replay_buffer, k=BATCH_SIZE), dtype=object)
+            batch = jnp.asarray(random.sample(replay_buffer, k=BATCH_SIZE))
             params, optim_state = update(params, target_params, optim_state, batch)
 
         s_t = s_tp1
