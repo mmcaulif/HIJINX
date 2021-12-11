@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from collections import deque
 from typing import NamedTuple
+import haiku as hk
 import gym
 import random
 
@@ -38,12 +39,37 @@ class Transition(NamedTuple):
 
 batch = Transition(*zip(*random.sample(replay_buffer, k=4)))
 
-print("B: ", batch)
-
 s_tm1 = jnp.array(batch.s_tm1, dtype=jnp.float32)
+a_t = jnp.array(batch.a, dtype = jnp.int32)
+r_t = jnp.array(batch.r, dtype = jnp.float32)
 s_t = jnp.array(batch.s_t, dtype=jnp.float32)
+done = jnp.array(batch.d, dtype = jnp.float32)
 
-print("S1: ", s_tm1)
-print("S2: ", s_t)
+@hk.transform   #stable baselines3 dqn network is input_dim, 64, 64, output_dim
+def net(S):
+    seq = hk.Sequential([
+        hk.Linear(64), jax.nn.relu,
+        hk.Linear(64), jax.nn.relu,
+        hk.Linear(env.action_space.n),  # , w_init=jnp.zeros
+    ])
+    return seq(S)
+    
+params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), hk.without_apply_rng(net).apply
 
-print(batch_test(s_tm1, s_t))
+Q_s = forward(params, s_t)
+
+"""print("Action: ", a_t)
+print("\nState:\n", s_t, "\nQ-Value:\n", Q_s)
+print("\nPairs: ")
+Q_s = jnp.array([Q_s[i][a_t[i]] for i in range(len(a_t))], dtype = jnp.float32)
+
+print(Q_s)"""
+
+@jax.vmap
+def test_func(stm1, at, rt, st, d):
+    qtm1, qt = forward(params, stm1), forward(params, st)
+    return qtm1[at], qt[at]
+
+Q_sm1, Q_s = test_func(s_tm1, a_t, r_t, s_t, done)
+
+print(Q_sm1, Q_s)

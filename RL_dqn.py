@@ -5,6 +5,7 @@ import numpy as np
 from jax.lax import stop_gradient
 import haiku as hk
 from collections import deque
+from typing import NamedTuple
 import optax
 import gym
 from gym.wrappers import RecordEpisodeStatistics
@@ -13,54 +14,61 @@ import os
 
 os.environ.setdefault('JAX_PLATFORM_NAME', 'cpu')  # tell JAX to use CPU, cpu is faster on small networks
 
-# hyper parameters
-LEARNING_RATE = 1e-3
+# Hyper parameters from stable baselines3 - https://stable-baselines3.readthedocs.io/en/master/modules/dqn.html
+LEARNING_RATE = 0.0001
 GAMMA = 0.99
-BUFFER_SIZE = 100000
-TRAIN_EPS = 3000
-TARGET_UPDATE = 10
-VERBOSE_UPDATE = 25
+BUFFER_SIZE = 1000000
+TRAIN_STEPS = 300000
+TARGET_UPDATE = 10000
+VERBOSE_UPDATE = 1000
 EPSILON = 1
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 
-# functions
-mse_loss = lambda x, xp: (jnp.power((x - xp), 2)).sum(-1).mean()
+# Functions
+class Transition(NamedTuple):
+	s: list # state
+	a: int # action
+	r: float # reward
+	s_p: list # next state
+	d: int # done
 
-@jax.value_and_grad #maybe try decorate with jit and then use value_and_grad when calling it instead
-def loss_fn(params, target_params, batch):
-    s_t = jnp.asarray(batch[:,0])
-    a_t = jnp.asarray(batch[:,1])
-    r_t = jnp.asarray(batch[:,2])
-    s_tp1 = jnp.asarray(batch[:,3])
-    done = jnp.asarray(batch[:,4])
+@jax.vmap
+def q_loss_fn(Q_s, Q_sp1, s_t, a_t, r_t, s_tp1, done):
+    Q_target = r_t + GAMMA * Q_sp1.max() * (1 - done)
+    return (Q_s[a_t] - Q_target)
 
+@jax.jit
+def mse_loss(params, target_params, s_t, a_t, r_t, s_tp1, done):
     Q_s = forward(params, s_t)
-    Q_sp1 = stop_gradient(forward(target_params, s_tp1))    # don't compute grads of target
-    Q_target = r_t + jnp.max(Q_sp1) * GAMMA * (1 - done)    # might be doing this wrong, check other repo's
-    #td_mse = mse_loss(Q_s[a_t], stop_gradient(Q_target))
-    return 0.5 * (jnp.square((Q_s[a_t] - Q_target).mean()))
+    Q_sp1 = stop_gradient(forward(target_params, s_tp1))
+    losses = q_loss_fn(Q_s, Q_sp1, s_t, a_t, r_t, s_tp1, done)
+    return 0.5 * jnp.square(losses).mean()
 
 @jax.jit  # sped it up maybe 20x fold
 def update(params, target_params, optim_state, batch):
-    loss, grads = loss_fn(params, target_params, batch)
-    #print(loss)
+    s_t = jnp.array(batch.s, dtype = jnp.float32)
+    a_t = jnp.array(batch.a, dtype = jnp.int32)
+    r_t = jnp.array(batch.r, dtype = jnp.float32)
+    s_tp1 = jnp.array(batch.s_p, dtype = jnp.float32)
+    done = jnp.array(batch.d, dtype = jnp.float32)
+
+    loss, grads = jax.value_and_grad(mse_loss)(params, target_params, s_t, a_t, r_t, s_tp1, done)
     updates, optim_state = optimizer.update(grads, optim_state, params)
     params = optax.apply_updates(params, updates)
     return params, optim_state
 
 
-def epsilon_greedy(epsilon):
+def epsilon_greedy(epsilon):    #need to make anneal from a max to a min instead of current method
     rand = random.random()
-    if rand < epsilon:  # basic explore system
+    if rand < epsilon:
         a_t = env.action_space.sample()
     else:
         a_t = int(jnp.argmax(forward(params, jnp.asarray(s_t))))
-
-    return a_t
+    epsilon = epsilon * 0.99
+    return a_t, epsilon
 
 
 # initialisations
-
 @hk.transform   #stable baselines3 dqn network is input_dim, 64, 64, output_dim
 def net(S):
     seq = hk.Sequential([
@@ -77,40 +85,35 @@ env = RecordEpisodeStatistics(env)
 # experience replay:
 replay_buffer = deque(maxlen=BUFFER_SIZE)
 # neural network:
-params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), jax.jit(hk.without_apply_rng(net).apply)
+params, forward = net.init(jax.random.PRNGKey(42), jnp.ones(4)), hk.without_apply_rng(net).apply
 target_params = hk.data_structures.to_immutable_dict(params)
 # optimiser:
 optimizer = optax.rmsprop(learning_rate=LEARNING_RATE)
 optim_state = optimizer.init(params)
 
 s_t = env.reset()
+G = []
 
-avg_eps_return, return_sum = 0, 0
+for i in range(1, TRAIN_STEPS): #need to make the 'train start' after only 50,000 steps has passed
+    a_t, EPSILON = epsilon_greedy(EPSILON)
+    s_tp1, r_t, done, info = env.step(a_t)
 
-for i in range(1, TRAIN_EPS):
-    done = False
-    while not done:
-        a_t = epsilon_greedy(EPSILON)
-        s_tp1, r_t, done, info = env.step(a_t)
+    replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
+    if len(replay_buffer) > BATCH_SIZE:
+        batch = Transition(*zip(*random.sample(replay_buffer, k=BATCH_SIZE)))
+        params, optim_state = update(params, target_params, optim_state, batch)
 
-        replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
-        if len(replay_buffer) > BATCH_SIZE:
-            batch = jnp.asarray(random.sample(replay_buffer, k=BATCH_SIZE))
-            params, optim_state = update(params, target_params, optim_state, batch)
+    s_t = s_tp1
 
-        s_t = s_tp1
-        EPSILON = EPSILON * 0.99
+    if i % TARGET_UPDATE == 0:
+        target_params = hk.data_structures.to_immutable_dict(params)
 
-        if i % TARGET_UPDATE == 0:
-            target_params = hk.data_structures.to_immutable_dict(params)
+    if done:
+        G.append(int(info['episode']['r']))
+        s_t = env.reset()
 
-        if done:
-            return_sum += int(info['episode']['r'])
-            if i % VERBOSE_UPDATE == 0:
-                avg_eps_return = return_sum / VERBOSE_UPDATE
-                print("Episode: {}, Average return: {}".format(i, avg_eps_return))
-                return_sum = 0
-
-    s_t = env.reset()
+    if i % VERBOSE_UPDATE == 0:
+        avg_G = sum(G[-10:])/10
+        print("Timestep: {}, Average return: {}".format(i, avg_G))
 
 env.close()
