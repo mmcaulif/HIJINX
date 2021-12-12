@@ -54,8 +54,8 @@ def update(params, target_params, optim_state, batch):
     s_tp1 = jnp.array(batch.s_p, dtype = jnp.float32)
     done = jnp.array(batch.d, dtype = jnp.float32)
 
-    loss, grads = jax.value_and_grad(mse_loss)(params, target_params, s_t, a_t, r_t, s_tp1, done)   # find jax equivelant to this:
-    updates, optim_state = optimizer.update(grads, optim_state, params) # https://pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html
+    loss, grads = jax.value_and_grad(mse_loss)(params, target_params, s_t, a_t, r_t, s_tp1, done)
+    updates, optim_state = optimizer.update(grads, optim_state, params)
     params = optax.apply_updates(params, updates)
     return params, optim_state
 
